@@ -21,11 +21,15 @@ namespace E8Tools.V8Unpack
             _reader = reader;
         }
 
-        public BlockHeader NextPage(long dataSize)
+        public BlockHeader NextPage()
+        {
+            return NextPage(_reader.V8_FF_SIGNATURE);
+        }
+
+        public BlockHeader NextPage(ulong pageSize)
         {
             _stream.Seek(0, SeekOrigin.End);
-            //var blockHeader = new BlockHeader(0, _reader.DEFAULT_PAGE_SIZE, _reader.V8_FF_SIGNATURE);
-            var blockHeader = new BlockHeader(0, _reader.V8_FF_SIGNATURE, _reader.V8_FF_SIGNATURE);
+            var blockHeader = new BlockHeader(0, pageSize, _reader.V8_FF_SIGNATURE);
             return blockHeader;
         }
     }

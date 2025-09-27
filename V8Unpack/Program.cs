@@ -4,7 +4,6 @@ Mozilla Public License, v.2.0. If a copy of the MPL
 was not distributed with this file, You can obtain one 
 at http://mozilla.org/MPL/2.0/.
 ----------------------------------------------------------*/
-using E8Tools.V8Unpack;
 using System.Text;
 
 void Usage()
@@ -41,15 +40,15 @@ void RecursiveParse(E8Tools.V8Unpack.Container Cf, string destDir, bool showProg
             RecursiveParse(innerCf, dstPath);
 
             input.Close();
-            System.IO.File.Delete(tmpPath);
+            File.Delete(tmpPath);
         }
         else
         {
             input.Close();
-            if (System.IO.File.Exists(dstPath)) {
-                System.IO.File.Delete(dstPath);
+            if (File.Exists(dstPath)) {
+                File.Delete(dstPath);
             }
-            System.IO.File.Move(tmpPath, dstPath);
+            File.Move(tmpPath, dstPath);
         }
     }
 }
@@ -135,7 +134,7 @@ void ListFiles()
         long fileSize = 0;
         string packedSign = "-";
         string dirSign = "-";
-        using (var fileStream = (BlockReaderStream)file.GetStream(false))
+        using (var fileStream = (E8Tools.V8Unpack.BlockReaderStream)file.GetStream(false))
         {
             fileSize = fileStream.Length;
             if (fileStream.IsContainer) dirSign = "d";
@@ -147,7 +146,7 @@ void ListFiles()
 
         var sizePresentation = new StringBuilder(fileSize.ToString());
 
-        Console.WriteLine($"{dirSign} {file.ModificationTime}    {namePresentation}   {fileSize,10} {packedSign} ");
+        Console.WriteLine($"{dirSign} {file.ModificationTime.Date:dd.MM.yyyy} {file.ModificationTime.TimeOfDay,8}    {namePresentation}   {fileSize,10} {packedSign} ");
 
     }
 }

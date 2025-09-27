@@ -34,10 +34,6 @@ namespace E8Tools.V8Unpack
             _formatReader = formatReader;
 
             currentHeader = _formatReader.ReadBlockHeader(_reader);
-            if (currentHeader == null)
-            {
-                throw new FileFormatException();
-            }
             _dataSize = currentHeader.DataSize;
             _position = 0;
             _streamStartPosition = basicStream.Position;

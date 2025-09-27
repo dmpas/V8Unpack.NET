@@ -56,7 +56,7 @@ namespace E8Tools.V8Unpack
             Stream = _formatReader.WrapStream(stream, true);
             _formatReader.WriteContainerHeader(Stream, _header);
             _pageAllocator = new PageAllocator(Stream, _formatReader, _header);
-            ReservePage(_header.PageSize);
+            ReservePage();
               
             _ownedStream = true;
         }
@@ -79,17 +79,17 @@ namespace E8Tools.V8Unpack
         /// <returns>Файлы контейнера</returns>
         public IEnumerable<File> Files()
         {
-            foreach (var el in _elements)
+            foreach (var entry in _elements)
             {
-                Stream.Seek((long)el.HeaderAddress, SeekOrigin.Begin);
-                using (var r = new BlockReaderStream(Stream, _formatReader))
+                Stream.Seek((long)entry.HeaderAddress, SeekOrigin.Begin);
+                using (var headerReader = new BlockReaderStream(Stream, _formatReader))
                 {
-                    var eh = Utils.ReadElementHeader(r);
+                    var elementHeader = Utils.ReadElementHeader(headerReader);
                     yield return new File(this,
-                        eh.Name,
-                        eh.DateCreation,
-                        eh.DateModification,
-                        el.DataAddress
+                        elementHeader.Name,
+                        elementHeader.DateCreation,
+                        elementHeader.DateModification,
+                        entry.DataAddress
                     );
                 }
             }
@@ -99,7 +99,9 @@ namespace E8Tools.V8Unpack
         {
             if (_changed)
             {
+                _header.StorageVer += 1;
                 UpdateHeader();
+                _changed = false;
             }
             Stream.Flush();
         }
@@ -108,8 +110,8 @@ namespace E8Tools.V8Unpack
         {
             Stream.Seek(0, SeekOrigin.Begin);
             _formatReader.WriteContainerHeader(Stream, _header);
-            var page = new BlockHeader(0, _formatReader.DEFAULT_PAGE_SIZE, _formatReader.V8_FF_SIGNATURE);
-            using (var writer = new BlockWriterStream(Stream, _formatReader, page))
+            var page = new BlockHeader(0, _header.PageSize, _formatReader.V8_FF_SIGNATURE);
+            using (var writer = new BlockWriterStream(Stream, _formatReader, page, _pageAllocator))
             {
                 foreach (var el in _elements)
                 {
@@ -121,20 +123,20 @@ namespace E8Tools.V8Unpack
             }
         }
 
-        private void ReservePage(long pageSize)
+        private void ReservePage()
         {
-            var page = _pageAllocator.NextPage(pageSize);
-            using (var writer = new BlockWriterStream(Stream, _formatReader, page))
+            var page = _pageAllocator.NextPage(_formatReader.DEFAULT_PAGE_SIZE);
+            using (var writer = new BlockWriterStream(Stream, _formatReader, page, _pageAllocator))
             {
-                while (pageSize-- != 0) writer.WriteByte(0);
+                //
             }
         }
 
         public File AddFile(string name, Stream data, bool packData = true)
         {
-            var page = _pageAllocator.NextPage(data.Length);
+            var page = _pageAllocator.NextPage();
             var dataPosition = (ulong)Stream.Position;
-            using (var blockWriter = new BlockWriterStream(Stream, _formatReader, page))
+            using (var blockWriter = new BlockWriterStream(Stream, _formatReader, page, _pageAllocator))
             {
                 if (packData)
                 {
@@ -150,9 +152,9 @@ namespace E8Tools.V8Unpack
             }
 
             var elementHeader = new ElementHeaderData(name);
-            var headerPage = _pageAllocator.NextPage(_formatReader.DEFAULT_PAGE_SIZE);
+            var headerPage = _pageAllocator.NextPage(_header.PageSize);
             var headerPosition = (ulong)Stream.Position;
-            using (var blockWriter = new BlockWriterStream(Stream, _formatReader, headerPage)) {
+            using (var blockWriter = new BlockWriterStream(Stream, _formatReader, headerPage, _pageAllocator)) {
                 Utils.WriteElementHeader(blockWriter, elementHeader);
             }
 

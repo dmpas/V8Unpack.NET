@@ -13,10 +13,10 @@ namespace E8Tools.V8Unpack
 {
     public class ContainerHeader
     {
-        public readonly ulong FreePageAddress;
-        public readonly uint PageSize;
-        public readonly uint StorageVer;
-        public readonly uint Reserved;
+        public ulong FreePageAddress;
+        public uint PageSize;
+        public uint StorageVer;
+        public uint Reserved;
 
         public ContainerHeader(ulong freePageAddress, uint pageSize, uint storageVer, uint reserved)
         {
@@ -254,21 +254,17 @@ namespace E8Tools.V8Unpack
 
         public virtual BlockHeader ReadBlockHeader(Stream stream)
         {
+            var initialPosition = stream.Position;
             if (BlockHeader.TryRead<UInt32>(stream, out BlockHeader blockHeader))
             {
                 return blockHeader;
             }
-            return null;
+            throw new BlockHeaderExpected(initialPosition);
         }
 
         public virtual Stream WrapStream(Stream stream, bool create = false)
         {
             return stream;
-        }
-
-        public virtual void Seek(Stream stream, ulong offset)
-        {
-            stream.Seek((long)offset, SeekOrigin.Begin);
         }
 
         public virtual ElementAddress ReadElementAddress(Stream stream)
@@ -304,6 +300,8 @@ namespace E8Tools.V8Unpack
         
         public override ulong V8_FF_SIGNATURE { get; } = 0xffffffffffffffff;
 
+        public override uint DEFAULT_PAGE_SIZE { get; } = 0x200;
+
         public override ContainerAddressType AddressType { get; } = ContainerAddressType._64bit;
 
         public override ContainerHeader ReadContainerHeader(Stream stream)
@@ -313,11 +311,12 @@ namespace E8Tools.V8Unpack
 
        public override BlockHeader ReadBlockHeader(Stream stream)
         {
+            var initialPosition = stream.Position;
             if (BlockHeader.TryRead<UInt64>(stream, out BlockHeader blockHeader))
             {
                 return blockHeader;
             }
-            return null;
+            throw new BlockHeaderExpected(initialPosition, (long)V8_OFFSET_80316);
         }
         public override Stream WrapStream(Stream stream, bool create = false)
         {
@@ -347,11 +346,6 @@ namespace E8Tools.V8Unpack
                 (UInt64)elementAddress.DataAddress,
                 (UInt64)V8_FF_SIGNATURE);
             Utils.Write<ElementAddressDto64>(stream, dto);
-        }
-
-        public override void Seek(Stream stream, ulong offset)
-        {
-            stream.Seek((long)(offset + V8_OFFSET_80316), SeekOrigin.Begin);
         }
 
         public override ElementAddress ReadElementAddress(Stream stream)

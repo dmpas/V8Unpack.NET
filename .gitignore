@@ -55,6 +55,7 @@ nunit-*.xml
 
 .vs/
 *.cf
+TestScript/epf/
 *.exe
 *.dll
 launchSettings.json
