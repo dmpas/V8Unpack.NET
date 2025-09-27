@@ -322,7 +322,10 @@ namespace E8Tools.V8Unpack
         {
             if (create)
             {
-                for (int i = 0; i < (int)V8_OFFSET_80316; i++) stream.WriteByte(0);
+                for (int i = 0; i < Placeholder32.placeholder.Length; i++)
+                {
+                    stream.WriteByte((byte)Placeholder32.placeholder[i]);
+                }
             }
             return new OffsetBasedStream(stream, (long)V8_OFFSET_80316);
         }
