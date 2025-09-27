@@ -8,15 +8,26 @@ using E8Tools.V8Unpack.Exceptions;
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace E8Tools.V8Unpack
 {
     internal static class Utils
     {
-        
+
+        public static Encoding NamesEncoding = new UnicodeEncoding(bigEndian: false, byteOrderMark: false);
+
         public static DateTime FromFileDate(UInt64 serializedDate)
         {
-            return new DateTime((long)serializedDate * 1000);
+            var ticks = (long)serializedDate * 1000;
+            if (ticks >= DateTime.MinValue.Ticks &&  ticks <= DateTime.MaxValue.Ticks)
+                return new DateTime(ticks);
+            return DateTime.MinValue;
+        }
+
+        public static ulong ToFileDate(DateTime dateTime)
+        {
+            return (ulong)(dateTime.Ticks / 1000);
         }
 
         public static T Read<T>(Stream stream) where T : struct
@@ -41,6 +52,54 @@ namespace E8Tools.V8Unpack
             throw new FileFormatException();
         }
 
+        public static void Write<T>(Stream stream, T value) where T : struct
+        {
+            var size = Marshal.SizeOf(typeof(T));
+            var buffer = new byte[size];
+            GCHandle handle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+            try
+            {
+                var ptr = handle.AddrOfPinnedObject();
+                Marshal.StructureToPtr(value, ptr, false);
+                stream.Write(buffer, 0, size);
+            }
+            finally
+            {
+                handle.Free();
+            }
+        }
+
+        public static void WriteElementHeader(Stream stream, ElementHeaderData data)
+        {
+            ElementHeaderDataDto header = new ElementHeaderDataDto(
+                ToFileDate(data.DateCreation),
+                ToFileDate(data.DateModification),
+                data.Version
+            );
+            Write<ElementHeaderDataDto>(stream, header);
+            var nameAsBytes = NamesEncoding.GetBytes(data.Name);
+            stream.Write(nameAsBytes, 0, nameAsBytes.Length);
+
+            // столько действительно нужно
+            stream.WriteByte(0);
+            stream.WriteByte(0);
+            stream.WriteByte(0);
+            stream.WriteByte(0);
+        }
+
+        public static ElementHeaderData ReadElementHeader(Stream stream)
+        {
+            ElementHeaderDataDto header = Utils.Read<ElementHeaderDataDto>(stream);
+            var encoding = new UnicodeEncoding(bigEndian: false, byteOrderMark: false);
+            var buffer = new byte[4096];
+            var bytesRead = stream.Read(buffer, 0, buffer.Length);
+            var name = encoding.GetString(buffer, 0, bytesRead).TrimEnd('\0');
+            return new ElementHeaderData(name,
+                FromFileDate(header.DateCreation),
+                FromFileDate(header.DateModification),
+                header.Version);
+        }
+
         public static bool ReadCertainChar(Stream stream, byte character)
         {
             return stream.ReadByte() == character;
@@ -53,23 +112,40 @@ namespace E8Tools.V8Unpack
             var bytesRead = stream.Read(buffer, 0, size);
             if (bytesRead == size)
             {
-                GCHandle handle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
-                try
+                UInt64 result = 0;
+                for (int i = 0; i < size; i++)
                 {
-                    var ptr = handle.AddrOfPinnedObject();
-                    var data = (T)Marshal.PtrToStructure(ptr, typeof(T));
-                    UInt64 result = 0;
-                    for (int i = 0; i < size; i++)
-                    {
-                        result = (result << 4) | (byte)FromHexDigit(buffer[i]);
-                    }
-                    return result;
+                    result = (result << 4) | (byte)FromHexDigit(buffer[i]);
                 }
-                finally
-                {
-                    handle.Free();
-                }
+                return result;
             }
+            throw new FileFormatException();
+        }
+
+        public static void WriteUIntAsHexString<T>(Stream stream, UInt64 value)
+        {
+            var size = Marshal.SizeOf(typeof(T)) * 2;
+            var buffer = new byte[size];
+            for (int i = 0; i < size; i++)
+            {
+                buffer[size - i - 1] = ToHexDigit((int)(value & 0xf));
+                value >>= 4;
+            }
+            if (value != 0)
+            {
+                throw new FileFormatException();
+            }
+            stream.Write(buffer, 0, size);
+        }
+
+        public static byte ToHexDigit(int value)
+        {
+            if (value > 15)
+                throw new FileFormatException();
+            if (value >= 10)
+                return (byte)('a' + value - 10);
+            if (value >= 0)
+                return (byte)('0' + value);
             throw new FileFormatException();
         }
 

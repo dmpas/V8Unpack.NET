@@ -56,10 +56,11 @@ namespace E8Tools.V8Unpack
             return _elements;
         }
 
-        public static bool TryReader(Stream stream, FormatReader reader, ref ContainerRoot containerRoot)
+        public static bool TryReader(Stream source, FormatReader reader, ref ContainerRoot containerRoot)
         {
             ContainerHeader containerHeader = null;
-            reader.Seek(stream, 0);
+            Stream stream = reader.WrapStream(source);
+            stream.Seek(0, SeekOrigin.Begin);
             try
             {
                 containerHeader = reader.ReadContainerHeader(stream);

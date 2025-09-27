@@ -4,12 +4,17 @@ Mozilla Public License, v.2.0. If a copy of the MPL
 was not distributed with this file, You can obtain one 
 at http://mozilla.org/MPL/2.0/.
 ----------------------------------------------------------*/
+using E8Tools.V8Unpack;
+using System.Text;
+
 void Usage()
 {
     Console.WriteLine("V8Unpack command params");
     Console.WriteLine("Commands:");
     Console.WriteLine("\t-unpack SRC DSTDIR    - one-level unpack with inflate");
     Console.WriteLine("\t-parse  SRC DSTDIR    - recursive unpack");
+    Console.WriteLine("\t-build  SRCDIR DST    - recursive pack");
+    Console.WriteLine("\t-listfiles SRC        - list file entries");
 }
 
 void RecursiveParse(E8Tools.V8Unpack.Container Cf, string destDir, bool showProgress = false)
@@ -36,15 +41,15 @@ void RecursiveParse(E8Tools.V8Unpack.Container Cf, string destDir, bool showProg
             RecursiveParse(innerCf, dstPath);
 
             input.Close();
-            File.Delete(tmpPath);
+            System.IO.File.Delete(tmpPath);
         }
         else
         {
             input.Close();
-            if (File.Exists(dstPath)) {
-                File.Delete(dstPath);
+            if (System.IO.File.Exists(dstPath)) {
+                System.IO.File.Delete(dstPath);
             }
-            File.Move(tmpPath, dstPath);
+            System.IO.File.Move(tmpPath, dstPath);
         }
     }
 }
@@ -99,6 +104,54 @@ void Unpack()
     Console.WriteLine("Done.");
 }
 
+void Build()
+{
+    if (args.Length < 2)
+    {
+        Usage();
+        return;
+    }
+
+    var srcDir = args[1];
+    var filename = args[2];
+
+    E8Tools.V8Unpack.Container.CreateFromDirectory(srcDir, filename);
+    Console.WriteLine("Done.");
+}
+
+void ListFiles()
+{
+    if (args.Length < 1)
+    {
+        Usage();
+        return;
+    }
+
+    var filename = args[1];
+
+    var Cf = E8Tools.V8Unpack.Container.FromFile(filename);
+    foreach (var file in Cf.Files())
+    {
+        long fileSize = 0;
+        string packedSign = "-";
+        string dirSign = "-";
+        using (var fileStream = (BlockReaderStream)file.GetStream(false))
+        {
+            fileSize = fileStream.Length;
+            if (fileStream.IsContainer) dirSign = "d";
+            if (fileStream.IsPacked) packedSign = "z";
+        }
+        
+        var namePresentation = new StringBuilder(file.Name);
+        for (int i = file.Name.Length; i < 40; i++) namePresentation.Append(" ");
+
+        var sizePresentation = new StringBuilder(fileSize.ToString());
+
+        Console.WriteLine($"{dirSign} {file.ModificationTime}    {namePresentation}   {fileSize,10} {packedSign} ");
+
+    }
+}
+
 if (args ==  null || args.Length < 1)
 {
     Usage();
@@ -113,6 +166,14 @@ else
     else if (string.Equals(command, "-unpack", StringComparison.InvariantCultureIgnoreCase))
     {
         Unpack();
+    }
+    else if (string.Equals(command, "-build", StringComparison.InvariantCultureIgnoreCase))
+    {
+        Build();
+    }
+    else if (string.Equals(command, "-listfiles", StringComparison.InvariantCultureIgnoreCase))
+    {
+        ListFiles();
     }
     else
     {

@@ -58,3 +58,5 @@ nunit-*.xml
 *.exe
 *.dll
 launchSettings.json
+temp/
+v8r_TempDB/

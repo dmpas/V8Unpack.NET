@@ -8,7 +8,7 @@ namespace E8Tools.V8Unpack
 {
     public enum ContainerAddressType
     {
-        Unknown = 0,
+        Auto = 0,
         _32bit = 1,
         _64bit = 2,
     }

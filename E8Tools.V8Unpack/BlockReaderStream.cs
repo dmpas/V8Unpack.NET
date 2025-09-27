@@ -72,7 +72,7 @@ namespace E8Tools.V8Unpack
                 _currentPageData = null;
                 return;
             }
-            _formatReader.Seek(_reader, currentHeader.NextPageAddr);
+            _reader.Seek((long)currentHeader.NextPageAddr, SeekOrigin.Begin);
             currentHeader = _formatReader.ReadBlockHeader(_reader);
             if (currentHeader == null)
             {

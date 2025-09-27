@@ -4,6 +4,7 @@ Mozilla Public License, v.2.0. If a copy of the MPL
 was not distributed with this file, You can obtain one 
 at http://mozilla.org/MPL/2.0/.
 ----------------------------------------------------------*/
+using E8Tools.V8Unpack.Exceptions;
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -34,6 +35,14 @@ namespace E8Tools.V8Unpack
         public readonly UInt32 StorageVer;
         public readonly UInt32 Reserved;
 
+        public ContainerHeaderDto64(UInt64 freePageAddress, UInt32 pageSize, UInt32 storageVer, UInt32 reserved)
+        {
+            FreePageAddress = freePageAddress;
+            PageSize = pageSize;
+            StorageVer = storageVer;
+            Reserved = reserved;
+        }
+
         public ContainerHeader Cast()
         {
             return new ContainerHeader(
@@ -52,6 +61,14 @@ namespace E8Tools.V8Unpack
         public readonly UInt32 PageSize;
         public readonly UInt32 StorageVer;
         public readonly UInt32 Reserved;
+
+        public ContainerHeaderDto32(UInt32 freePageAddress, UInt32 pageSize, UInt32 storageVer, UInt32 reserved)
+        {
+            FreePageAddress = freePageAddress;
+            PageSize = pageSize;
+            StorageVer = storageVer;
+            Reserved = reserved;
+        }
 
         public ContainerHeader Cast()
         {
@@ -85,6 +102,13 @@ namespace E8Tools.V8Unpack
         public readonly UInt32 DataAddress;
         public readonly UInt32 Signature;
 
+        public ElementAddressDto32(UInt32 headerAddress, UInt32 dataAddress, UInt32 signature)
+        {
+            HeaderAddress = headerAddress;
+            DataAddress = dataAddress;
+            Signature = signature;
+        }
+
         public ElementAddress Cast()
         {
             return new ElementAddress(HeaderAddress, DataAddress, Signature);
@@ -99,6 +123,13 @@ namespace E8Tools.V8Unpack
         public readonly UInt64 DataAddress;
         public readonly UInt64 Signature;
 
+        public ElementAddressDto64(UInt64 headerAddress, UInt64 dataAddress, UInt64 signature)
+        {
+            HeaderAddress = headerAddress;
+            DataAddress = dataAddress;
+            Signature = signature;
+        }
+
         public ElementAddress Cast()
         {
             return new ElementAddress(HeaderAddress, DataAddress, Signature);
@@ -107,11 +138,24 @@ namespace E8Tools.V8Unpack
 
     public class ElementHeaderData
     {
-        public readonly ulong DateCreation;
-        public readonly ulong DateModification;
-        public readonly uint Version;
+        public DateTime DateCreation;
+        public DateTime DateModification;
+        public uint Version;
 
-        public readonly string Name;
+        public string Name;
+
+        public ElementHeaderData(string name) : this(name, DateTime.Now, DateTime.Now, 0)
+        {
+
+        }
+
+        public ElementHeaderData(string name, DateTime dateCreation, DateTime dateModification, uint version)
+        {
+            DateCreation = dateCreation;
+            DateModification = dateModification;
+            Version = version;
+            Name = name;
+        }
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -120,13 +164,20 @@ namespace E8Tools.V8Unpack
         public readonly UInt64 DateCreation;
         public readonly UInt64 DateModification;
         public readonly UInt32 Version;
+
+        public ElementHeaderDataDto(UInt64 dateCreation, UInt64 dateModification, UInt32 version)
+        {
+            DateCreation = dateCreation;
+            DateModification = dateModification;
+            Version = version;
+        }
     }
 
-    public class BlockHeader
+    public sealed class BlockHeader
     {
-        public readonly ulong DataSize;
-        public readonly ulong PageSize;
-        public readonly ulong NextPageAddr;
+        public ulong DataSize;
+        public ulong PageSize;
+        public ulong NextPageAddr;
 
         public BlockHeader(ulong dataSize, ulong pageSize, ulong nextPageAddr)
         {
@@ -160,7 +211,18 @@ namespace E8Tools.V8Unpack
 
         public static bool TryWrite<AddressUIntType>(Stream stream, BlockHeader header) where AddressUIntType : struct
         {
-            throw new NotImplementedException();
+            stream.WriteByte(13);
+            stream.WriteByte(10);
+            Utils.WriteUIntAsHexString<AddressUIntType>(stream, header.DataSize);
+            stream.WriteByte(32);
+            Utils.WriteUIntAsHexString<AddressUIntType>(stream, header.PageSize);
+            stream.WriteByte(32);
+            Utils.WriteUIntAsHexString<AddressUIntType>(stream, header.NextPageAddr);
+            stream.WriteByte(32);
+            stream.WriteByte(13);
+            stream.WriteByte(10);
+
+            return true;
         }
     }
 
@@ -172,10 +234,22 @@ namespace E8Tools.V8Unpack
         public virtual ContainerAddressType AddressType { get; } = ContainerAddressType._32bit;
 
         public virtual ulong V8_FF_SIGNATURE { get; } = 0x7fffffff;
+        public virtual uint DEFAULT_PAGE_SIZE { get; } = 0x200;
 
         public virtual ContainerHeader ReadContainerHeader(Stream stream)
         {
             return Utils.Read<ContainerHeaderDto32>(stream).Cast();
+        }
+
+        public virtual void WriteContainerHeader(Stream stream, ContainerHeader header)
+        {
+            ContainerHeaderDto32 dto = new ContainerHeaderDto32(
+                (UInt32)header.FreePageAddress,
+                header.PageSize,
+                header.StorageVer,
+                header.Reserved
+            );
+            Utils.Write<ContainerHeaderDto32>(stream, dto);
         }
 
         public virtual BlockHeader ReadBlockHeader(Stream stream)
@@ -185,6 +259,11 @@ namespace E8Tools.V8Unpack
                 return blockHeader;
             }
             return null;
+        }
+
+        public virtual Stream WrapStream(Stream stream, bool create = false)
+        {
+            return stream;
         }
 
         public virtual void Seek(Stream stream, ulong offset)
@@ -198,9 +277,20 @@ namespace E8Tools.V8Unpack
             return elementAddress.Cast();
         }
 
+        public virtual void WriteElementAddress(Stream stream, ElementAddress elementAddress)
+        {
+            if (elementAddress.HeaderAddress > UInt32.MaxValue) throw new FileFormatException();
+            if (elementAddress.DataAddress > UInt32.MaxValue) throw new FileFormatException();
+            ElementAddressDto32 dto = new ElementAddressDto32(
+                (UInt32)elementAddress.HeaderAddress,
+                (UInt32)elementAddress.DataAddress,
+                (UInt32)V8_FF_SIGNATURE);
+            Utils.Write<ElementAddressDto32>(stream, dto);
+        }
+
         public virtual void WriteBlockHeader(Stream stream, BlockHeader header)
         {
-            throw new NotImplementedException();
+            BlockHeader.TryWrite<UInt32>(stream, header);
         }
 
     }
@@ -229,6 +319,35 @@ namespace E8Tools.V8Unpack
             }
             return null;
         }
+        public override Stream WrapStream(Stream stream, bool create = false)
+        {
+            if (create)
+            {
+                for (int i = 0; i < (int)V8_OFFSET_80316; i++) stream.WriteByte(0);
+            }
+            return new OffsetBasedStream(stream, (long)V8_OFFSET_80316);
+        }
+        public override void WriteContainerHeader(Stream stream, ContainerHeader header)
+        {
+            ContainerHeaderDto64 dto = new ContainerHeaderDto64(
+                header.FreePageAddress,
+                header.PageSize,
+                header.StorageVer,
+                header.Reserved
+            );
+            Utils.Write<ContainerHeaderDto64>(stream, dto);
+        }
+
+        public override void WriteElementAddress(Stream stream, ElementAddress elementAddress)
+        {
+            if (elementAddress.HeaderAddress > UInt64.MaxValue) throw new FileFormatException();
+            if (elementAddress.DataAddress > UInt64.MaxValue) throw new FileFormatException();
+            ElementAddressDto64 dto = new ElementAddressDto64(
+                (UInt64)elementAddress.HeaderAddress,
+                (UInt64)elementAddress.DataAddress,
+                (UInt64)V8_FF_SIGNATURE);
+            Utils.Write<ElementAddressDto64>(stream, dto);
+        }
 
         public override void Seek(Stream stream, ulong offset)
         {
@@ -243,7 +362,7 @@ namespace E8Tools.V8Unpack
 
         public override void WriteBlockHeader(Stream stream, BlockHeader header)
         {
-            throw new NotImplementedException();
+            BlockHeader.TryWrite<UInt64>(stream, header);
         }
     }
 

@@ -9,7 +9,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
-using System.Text;
 
 namespace E8Tools.V8Unpack
 {
@@ -21,7 +20,9 @@ namespace E8Tools.V8Unpack
         private readonly bool _ownedStream;
         private readonly ContainerHeader _header;
         private readonly List<ElementAddress> _elements;
-        private readonly FormatReader formatReader;
+        private readonly FormatReader _formatReader;
+        private readonly PageAllocator _pageAllocator;
+        private bool _changed = false;
 
         private Container(Stream stream, bool ownedStream = false) {
 
@@ -33,10 +34,31 @@ namespace E8Tools.V8Unpack
             var root = ContainerRoot.FindRoot(stream) ?? throw new NotAContainerException();
             _header = root._header;
             _elements = root._elements;
-            formatReader = root._formatReader;
+            _formatReader = root._formatReader;
 
-            Stream = stream;
+            Stream = _formatReader.WrapStream(stream);
             _ownedStream = ownedStream;
+            _pageAllocator = new PageAllocator(Stream, _formatReader, _header);
+        }
+
+        private Container(Stream stream, FormatReader formatReader)
+        {
+
+            if (!stream.CanSeek)
+            {
+                throw new StreamMustCanSeekException();
+            }
+
+            _header = new ContainerHeader(formatReader.V8_FF_SIGNATURE, formatReader.DEFAULT_PAGE_SIZE, 0, 0);
+            _elements = new List<ElementAddress>();
+            _formatReader = formatReader;
+
+            Stream = _formatReader.WrapStream(stream, true);
+            _formatReader.WriteContainerHeader(Stream, _header);
+            _pageAllocator = new PageAllocator(Stream, _formatReader, _header);
+            ReservePage(_header.PageSize);
+              
+            _ownedStream = true;
         }
 
         private Stream Stream { get; }
@@ -44,7 +66,7 @@ namespace E8Tools.V8Unpack
         /// <summary>
         /// Определяет тип адресации внутри контейнера
         /// </summary>
-        public ContainerAddressType AddressType => formatReader.AddressType;
+        public ContainerAddressType AddressType => _formatReader.AddressType;
 
         /// <summary>
         /// Возвращает количество файлов в контейнере.
@@ -59,20 +81,87 @@ namespace E8Tools.V8Unpack
         {
             foreach (var el in _elements)
             {
-                formatReader.Seek(Stream, el.HeaderAddress);
-                byte[] buffer = BlockReaderStream.ReadDataBlock(Stream, formatReader);
-                var ms = new MemoryStream(buffer);
-                ElementHeaderDataDto header = Utils.Read<ElementHeaderDataDto>(ms);
-                var encoding = new UnicodeEncoding(bigEndian: false, byteOrderMark: false);
-                var name = encoding.GetString(buffer, (int)ms.Position, (int)(ms.Length - ms.Position)).TrimEnd('\0');
-
-                yield return new File(this,
-                    name,
-                    Utils.FromFileDate(header.DateCreation),
-                    Utils.FromFileDate(header.DateModification),
-                    el.DataAddress
-                );
+                Stream.Seek((long)el.HeaderAddress, SeekOrigin.Begin);
+                using (var r = new BlockReaderStream(Stream, _formatReader))
+                {
+                    var eh = Utils.ReadElementHeader(r);
+                    yield return new File(this,
+                        eh.Name,
+                        eh.DateCreation,
+                        eh.DateModification,
+                        el.DataAddress
+                    );
+                }
             }
+        }
+
+        public void Close()
+        {
+            if (_changed)
+            {
+                UpdateHeader();
+            }
+            Stream.Flush();
+        }
+
+        private void UpdateHeader()
+        {
+            Stream.Seek(0, SeekOrigin.Begin);
+            _formatReader.WriteContainerHeader(Stream, _header);
+            var page = new BlockHeader(0, _formatReader.DEFAULT_PAGE_SIZE, _formatReader.V8_FF_SIGNATURE);
+            using (var writer = new BlockWriterStream(Stream, _formatReader, page))
+            {
+                foreach (var el in _elements)
+                {
+                    if (el.HeaderAddress != _formatReader.V8_FF_SIGNATURE)
+                    {
+                        _formatReader.WriteElementAddress(writer, el);
+                    }
+                }
+            }
+        }
+
+        private void ReservePage(long pageSize)
+        {
+            var page = _pageAllocator.NextPage(pageSize);
+            using (var writer = new BlockWriterStream(Stream, _formatReader, page))
+            {
+                while (pageSize-- != 0) writer.WriteByte(0);
+            }
+        }
+
+        public File AddFile(string name, Stream data, bool packData = true)
+        {
+            var page = _pageAllocator.NextPage(data.Length);
+            var dataPosition = (ulong)Stream.Position;
+            using (var blockWriter = new BlockWriterStream(Stream, _formatReader, page))
+            {
+                if (packData)
+                {
+                    using (var deflator = new DeflateStream(blockWriter, CompressionLevel.Fastest))
+                    {
+                        data.CopyTo(deflator);
+                    }
+                }
+                else
+                {
+                    data.CopyTo(blockWriter);
+                }
+            }
+
+            var elementHeader = new ElementHeaderData(name);
+            var headerPage = _pageAllocator.NextPage(_formatReader.DEFAULT_PAGE_SIZE);
+            var headerPosition = (ulong)Stream.Position;
+            using (var blockWriter = new BlockWriterStream(Stream, _formatReader, headerPage)) {
+                Utils.WriteElementHeader(blockWriter, elementHeader);
+            }
+
+            var entryElement = new ElementAddress(headerPosition, dataPosition, _formatReader.V8_FF_SIGNATURE);
+            _elements.Add(entryElement);
+            _changed = true;
+
+            var file = new File(this, name, DateTime.Now, DateTime.Now, dataPosition);
+            return file;
         }
 
         /// <summary>
@@ -83,11 +172,10 @@ namespace E8Tools.V8Unpack
         /// <returns>Поток для чтения</returns>
         public Stream OpenStream(File file, bool forceDecompression = true)
         {
-            if (file.DataOffset != 0 && file.DataOffset != formatReader.V8_FF_SIGNATURE)
+            if (file.DataOffset != 0 && file.DataOffset != _formatReader.V8_FF_SIGNATURE)
             {
-                formatReader.Seek(Stream, file.DataOffset);
-                var blockReader = new BlockReaderStream(Stream, formatReader);
-                
+                Stream.Seek((long)file.DataOffset, SeekOrigin.Begin);
+                var blockReader = new BlockReaderStream(Stream, _formatReader);
                 if (blockReader.IsPacked && forceDecompression)
                 {
                     return new DeflateStream(blockReader, CompressionMode.Decompress);
@@ -130,8 +218,65 @@ namespace E8Tools.V8Unpack
             return new Container(stream, true);
         }
 
+        public static void CreateFromDirectory(string sourceDirectoryName, string destinationArchiveFileName, ContainerAddressType addressType = ContainerAddressType.Auto, bool packFiles = true)
+        {
+            if (addressType == ContainerAddressType.Auto)
+            {
+                FileInfo fi = new FileInfo(destinationArchiveFileName);
+                if (string.Equals(fi.Extension, ".EPF", StringComparison.InvariantCultureIgnoreCase)
+                    || string.Equals(fi.Extension, ".ERF", StringComparison.InvariantCultureIgnoreCase))
+                {
+                    addressType = ContainerAddressType._32bit;
+                }
+                else
+                {
+                    addressType = AnalyzeAddressType(sourceDirectoryName);
+                }
+            }
+
+            FormatReader formatReader = addressType == ContainerAddressType._64bit ? FormatReader64.Instance : FormatReader.Instance;
+
+            var containerStream = new FileStream(destinationArchiveFileName, FileMode.Create, FileAccess.Write);
+            using (var container = new Container(containerStream, formatReader))
+            {
+                foreach (var dir in Directory.EnumerateDirectories(sourceDirectoryName))
+                {
+                    var dirPath = new DirectoryInfo(dir);
+                    var tempFilename = Path.GetTempFileName();
+                    CreateFromDirectory(dir, tempFilename, ContainerAddressType.Auto, false);
+                    using (var fileStream = new FileStream(tempFilename, FileMode.Open, FileAccess.Read)) {
+                        container.AddFile(dirPath.Name, fileStream, packFiles);
+                    }
+                    System.IO.File.Delete(tempFilename);
+                }
+                foreach (var file in Directory.EnumerateFiles(sourceDirectoryName))
+                {
+                    var filePath = new FileInfo(file);
+                    using (var fileStream = new FileStream(file, FileMode.Open, FileAccess.Read))
+                    {
+                        container.AddFile(filePath.Name, fileStream, packFiles);
+                    }
+                }
+            }
+        }
+
+        private static ContainerAddressType AnalyzeAddressType(string sourceDirectoryName)
+        {
+            var versionFilePath = Path.Combine(sourceDirectoryName, "version");
+            if (System.IO.File.Exists(versionFilePath))
+            {
+                var version = VersionFile.FromFile(versionFilePath);
+                if (version.Compatibility >= VersionFile.COMPATIBILITY_V80316)
+                {
+                    return ContainerAddressType._64bit;
+                }
+            }
+            return ContainerAddressType._32bit;
+        }
+
         public void Dispose()
         {
+            Close();
             if (_ownedStream)
             {
                 Stream.Dispose();
