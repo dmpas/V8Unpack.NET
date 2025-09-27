@@ -127,6 +127,7 @@ namespace E8Tools.V8Unpack
                     _reader.WriteBlockHeader(_stream, _currentBlock);
                     offset += toWrite;
                     count -= toWrite;
+                    _totalDataSize += toWrite;
                 }
             }
             _stream.Write(buffer, offset, count);
